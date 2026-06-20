@@ -1,5 +1,5 @@
 from deepgram import DeepgramClient
-from app.config import Config
+from app.core.config import Config
 import asyncio
 
 dg_client = DeepgramClient(api_key=Config.DEEPGRAM_API_KEY)
@@ -13,5 +13,5 @@ async def synthesize_speech(text: str) -> bytes:
         encoding="mp3",
         sample_rate=24000
     )
-    
+
     return b"".join(audio_chunks)

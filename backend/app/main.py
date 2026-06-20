@@ -1,6 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import voice, realtime, agent
+
+# Vertical slices: each feature module owns its router + services.
+from app.features.voice import router as voice_router
+from app.features.realtime import router as realtime_router
+from app.features.agent import router as agent_router
 
 app = FastAPI(title="Voice AI Agent POC")
 
@@ -13,8 +17,9 @@ app.add_middleware(
     expose_headers=["X-Transcript", "X-Response"]
 )
 
-app.include_router(voice.router, prefix="/api/voice", tags=["voice"])
-app.include_router(realtime.router, prefix="/api/realtime", tags=["realtime"])
-app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
+# Mount each feature slice under its own URL prefix.
+app.include_router(voice_router.router, prefix="/api/voice", tags=["voice"])
+app.include_router(realtime_router.router, prefix="/api/realtime", tags=["realtime"])
+app.include_router(agent_router.router, prefix="/api/agent", tags=["agent"])
 
 app.frontend("/", directory="dist")

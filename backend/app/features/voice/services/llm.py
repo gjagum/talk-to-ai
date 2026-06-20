@@ -1,5 +1,5 @@
 from openai import OpenAI
-from app.config import Config
+from app.core.config import Config
 
 client = OpenAI(api_key=Config.OPENAI_API_KEY)
 conversation_history = []
@@ -31,20 +31,20 @@ async def generate_greeting(persona: str = None) -> str:
 
 async def generate_response(user_text: str, persona: str = None) -> str:
     conversation_history.append({"role": "user", "content": user_text})
-    
+
     if len(conversation_history) > Config.MAX_CONVERSATION_HISTORY * 2:
         conversation_history.pop(0)
-    
+
     messages = [get_system_message(persona)] + conversation_history
-    
+
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=messages,
         max_tokens=150,
         temperature=0.7
     )
-    
+
     assistant_response = response.choices[0].message.content
     conversation_history.append({"role": "assistant", "content": assistant_response})
-    
+
     return assistant_response
