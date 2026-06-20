@@ -1,0 +1,74 @@
+# ---------- Secrets / env ----------
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Type checkers / linters
+.mypy_cache/
+.ruff_cache/
+.pyre/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ---------- Node / Frontend ----------
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+.vite/
+.next/
+.cache/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# Vite + React specific
+*.local
+
+# ---------- Editor / OS ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ---------- Misc ----------
+tmp/
+*.tmp
