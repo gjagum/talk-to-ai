@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { PhoneCall, PhoneOff, Loader2 } from 'lucide-react';
+import { PhoneCall, PhoneOff, Loader2, Waves } from 'lucide-react';
 
 // Utility to convert Float32 (browser audio) to Int16 (OpenAI pcm16)
 function floatTo16BitPCM(input) {

@@ -75,54 +75,63 @@ function VoiceRecorder({ onSubmit, isProcessing, shouldRecord }) {
         }
       };
 
-      // Silence Detection
+      // Silence / endpoint detection (VAD).
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       const audioContext = new AudioContext();
       audioContextRef.current = audioContext;
       const analyser = audioContext.createAnalyser();
       analyser.fftSize = 512;
-      analyser.smoothingTimeConstant = 0.1;
+      // A bit of smoothing stabilises the level estimate without adding lag.
+      analyser.smoothingTimeConstant = 0.5;
       const source = audioContext.createMediaStreamSource(stream);
       source.connect(analyser);
-      
+
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+      const CALIBRATION_FRAMES = 30;    // ~0.5s sampling the ambient noise floor
+      const MIN_SPEECH_MS = 400;        // ignore blips shorter than this before arming endpointing
+      const SILENCE_HANGOVER_MS = 1500; // stop after this much trailing silence
+
       let silenceStart = Date.now();
+      let speechStart = 0;
       let hasSpoken = false;
       let frameCount = 0;
       let noiseSum = 0;
-      let threshold = 25; // Default fallback
-      
+      let threshold = 12; // recalculated during calibration below
+
       const checkSilence = () => {
         if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') return;
-        
-        // Both Native STT onend and AudioContext checkSilence will run in parallel for maximum reliability.
 
-        
+        // Native STT onend and this AudioContext loop run in parallel for reliability.
         analyser.getByteFrequencyData(dataArray);
-        
-        let maxVolume = 0;
-        for (let i = 0; i < dataArray.length; i++) {
-          if (dataArray[i] > maxVolume) {
-            maxVolume = dataArray[i];
-          }
-        }
-        
-        if (frameCount < 30) {
-           noiseSum += maxVolume;
-           frameCount++;
-           threshold = Math.max((noiseSum / frameCount) + 15, 20);
-           silenceStart = Date.now();
+
+        // Average energy across the spectrum. This is far more stable than the
+        // single loudest bin, which spikes on random noise and made endpointing
+        // either never fire or fire at the wrong moment.
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+        const level = sum / dataArray.length;
+
+        const now = Date.now();
+        if (frameCount < CALIBRATION_FRAMES) {
+          // Learn the ambient noise floor, then set the speech threshold well above it.
+          noiseSum += level;
+          frameCount++;
+          threshold = Math.max((noiseSum / frameCount) * 2 + 5, 8);
+          silenceStart = now;
+        } else if (level > threshold) {
+          // Voice present — require sustained energy before we trust it as speech,
+          // so a single cough/click can't arm the auto-stop.
+          if (speechStart === 0) speechStart = now;
+          if (now - speechStart >= MIN_SPEECH_MS) hasSpoken = true;
+          silenceStart = now;
         } else {
-           if (maxVolume > threshold) { 
-             silenceStart = Date.now();
-             hasSpoken = true;
-           } else {
-              const silenceDuration = Date.now() - silenceStart;
-              if (hasSpoken && silenceDuration > 3000) {
-                 stopRecording();
-                 return;
-              }
-           }
+          // Below threshold: accumulate trailing silence.
+          speechStart = 0;
+          if (hasSpoken && now - silenceStart > SILENCE_HANGOVER_MS) {
+            stopRecording();
+            return;
+          }
         }
         requestAnimationFrame(checkSilence);
       };
