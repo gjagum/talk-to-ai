@@ -10,7 +10,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from app.core.config import Config
 
-OPENAI_WS_URL = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01"
+OPENAI_WS_URL = "wss://api.openai.com/v1/realtime?model=gpt-realtime"
 
 
 async def _pump_client_to_openai(client_ws: WebSocket, openai_ws):
@@ -34,9 +34,11 @@ async def _pump_openai_to_client(openai_ws, client_ws: WebSocket):
 
 async def relay(client_ws: WebSocket) -> None:
     """Connect to OpenAI Realtime and pump messages both ways until either side closes."""
+    # GA Realtime API: no "OpenAI-Beta: realtime=v1" header — sending it forces
+    # the deprecated beta message shape and the server rejects it with
+    # beta_api_shape_disabled.
     headers = {
         "Authorization": f"Bearer {Config.OPENAI_API_KEY}",
-        "OpenAI-Beta": "realtime=v1",
     }
 
     try:
