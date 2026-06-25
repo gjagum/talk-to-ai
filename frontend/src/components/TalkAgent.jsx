@@ -24,10 +24,15 @@ export default function TalkAgent({ persona }) {
   const processorRef = useRef(null);
   const mediaStreamRef = useRef(null);
 
-  // Audio playback queue for incoming PCM chunks.
-  const playQueueRef = useRef([]);
-  const isPlayingRef = useRef(false);
-  const currentSourceRef = useRef(null);
+  // Audio playback scheduling for incoming PCM chunks. Deepgram's TTS is one
+  // continuous waveform split into many small (~20-80ms) chunks, so we schedule
+  // them back-to-back against a running clock (nextStartTimeRef) for gapless,
+  // sample-accurate playback. The previous approach started each chunk "now" on
+  // the previous one's `onended`, which left a silent gap before every chunk —
+  // those gaps + boundary discontinuities are what made the voice sound like a
+  // damaged/buzzing speaker.
+  const nextStartTimeRef = useRef(0);
+  const scheduledSourcesRef = useRef([]);
 
   // The persona is large (often >8KB when URL-encoded), so we send it as the
   // first JSON message after the socket opens rather than in the URL query string.
@@ -54,8 +59,7 @@ export default function TalkAgent({ persona }) {
         if (event.data instanceof ArrayBuffer) {
           // Binary audio from Deepgram TTS → convert PCM16 → Float32 → play.
           const float32 = pcm16ToFloat32(event.data);
-          playQueueRef.current.push(float32);
-          playNextChunk();
+          scheduleChunk(float32);
           return;
         }
 
@@ -69,13 +73,9 @@ export default function TalkAgent({ persona }) {
 
         switch (msg.type) {
           case 'UserStartedSpeaking':
-            // Barge-in: user spoke, interrupt the agent mid-sentence.
-            playQueueRef.current = [];
-            if (currentSourceRef.current) {
-              try { currentSourceRef.current.stop(); } catch (e) {}
-              currentSourceRef.current = null;
-            }
-            isPlayingRef.current = false;
+            // Barge-in: user spoke, interrupt the agent mid-sentence by stopping
+            // every chunk we've scheduled ahead and resetting the playback clock.
+            stopPlayback();
             break;
 
           case 'ConversationText':
@@ -143,27 +143,40 @@ export default function TalkAgent({ persona }) {
     return float32;
   };
 
-  const playNextChunk = () => {
-    if (isPlayingRef.current || playQueueRef.current.length === 0 || !audioContextRef.current) return;
+  // Schedule one PCM chunk to play immediately after whatever is already queued.
+  // Contiguous start times (no gaps, no overlaps) reconstruct the original
+  // continuous waveform, which is what keeps the voice clean.
+  const scheduleChunk = (chunk) => {
+    const ctx = audioContextRef.current;
+    if (!ctx) return;
 
-    isPlayingRef.current = true;
-    const chunk = playQueueRef.current.shift();
-
-    const audioBuffer = audioContextRef.current.createBuffer(1, chunk.length, 24000);
+    const audioBuffer = ctx.createBuffer(1, chunk.length, 24000);
     audioBuffer.getChannelData(0).set(chunk);
 
-    const source = audioContextRef.current.createBufferSource();
+    const source = ctx.createBufferSource();
     source.buffer = audioBuffer;
-    source.connect(audioContextRef.current.destination);
-    currentSourceRef.current = source;
+    source.connect(ctx.destination);
 
+    // Start at the previous chunk's end, or "now" (plus a small safety margin)
+    // if playback had drained — clamping to currentTime avoids scheduling in the
+    // past, which the Web Audio clock would otherwise round up and glitch on.
+    const startAt = Math.max(ctx.currentTime + 0.02, nextStartTimeRef.current);
+    source.start(startAt);
+    nextStartTimeRef.current = startAt + audioBuffer.duration;
+
+    scheduledSourcesRef.current.push(source);
     source.onended = () => {
-      isPlayingRef.current = false;
-      currentSourceRef.current = null;
-      playNextChunk();
+      scheduledSourcesRef.current = scheduledSourcesRef.current.filter((s) => s !== source);
     };
+  };
 
-    source.start();
+  // Stop all scheduled playback and reset the clock (barge-in / disconnect).
+  const stopPlayback = () => {
+    scheduledSourcesRef.current.forEach((s) => {
+      try { s.stop(); } catch (e) {}
+    });
+    scheduledSourcesRef.current = [];
+    nextStartTimeRef.current = 0;
   };
 
   const startMicrophone = async () => {
@@ -191,7 +204,7 @@ export default function TalkAgent({ persona }) {
       // captured mic audio into audioCtx.destination, which outputs it through
       // the speakers and creates an echo/feedback loop that distorts the AI's
       // voice. Writing silence here keeps onaudioprocess firing but mutes the
-      // passthrough — the agent's audio is played separately via playNextChunk().
+      // passthrough — the agent's audio is played separately via scheduleChunk().
       const outData = e.outputBuffer.getChannelData(0);
       outData.fill(0);
     };
@@ -235,7 +248,7 @@ export default function TalkAgent({ persona }) {
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach((track) => track.stop());
     }
-    playQueueRef.current = [];
+    stopPlayback();
   };
 
   // Cleanup on unmount.

@@ -6,7 +6,7 @@ to use:
   - listen:   Deepgram nova-3 with smart formatting.
   - think:    BYO OpenAI gpt-4o-mini (endpoint + auth header → bills caller's
               OpenAI account, not Deepgram's).
-  - speak:    Deepgram aura-2-thalia-en, a natural English female voice.
+  - speak:    Deepgram aura-asteria-en, highest-quality English female voice.
 """
 from app.core.config import Config
 
@@ -45,7 +45,7 @@ def build_settings(persona: str) -> dict:
                 "prompt": persona,
             },
             "speak": {
-                "provider": {"type": "deepgram", "model": "aura-2-thalia-en"},
+                "provider": {"type": "deepgram", "model": "aura-asteria-en"},
             },
             "greeting": DEFAULT_GREETING,
         },
