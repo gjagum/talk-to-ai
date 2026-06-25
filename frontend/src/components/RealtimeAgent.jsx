@@ -246,7 +246,7 @@ export default function RealtimeAgent({ persona }) {
         <button 
           onClick={connect}
           disabled={isConnecting}
-          className="flex items-center gap-3 bg-green-500 hover:bg-green-400 text-white px-8 py-4 rounded-full text-xl font-bold shadow-lg shadow-green-500/30 transition-all hover:scale-105"
+          className="flex items-center gap-3 bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-full text-xl font-bold shadow-lg shadow-blue-500/30 transition-all hover:scale-105"
         >
           {isConnecting ? <Loader2 className="w-6 h-6 animate-spin" /> : <PhoneCall className="w-6 h-6" />}
           {isConnecting ? "Connecting..." : "Start Realtime Call"}

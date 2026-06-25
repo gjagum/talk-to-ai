@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Waves, Zap, FileAudio, Headphones } from 'lucide-react';
+import { Waves, Zap, FileAudio, Headphones, CalendarDays } from 'lucide-react';
 import RealtimeAgent from './components/RealtimeAgent';
 import WhisperAgent from './components/WhisperAgent';
 import TalkAgent from './components/TalkAgent';
+import BookingManager from './components/booking/BookingManager';
 
 const DEFAULT_PERSONA = `#Identity
 You are:
@@ -231,8 +232,18 @@ function App() {
               <FileAudio className="w-5 h-5" />
               Whisper REST
             </button>
+            <button 
+              onClick={() => setMode('bookings')}
+              className={`flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all ${
+                mode === 'bookings' ? 'bg-amber-600 text-white shadow-lg shadow-amber-500/25' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <CalendarDays className="w-5 h-5" />
+              Bookings
+            </button>
           </div>
 
+          {mode !== 'bookings' && (
           <div className="w-full max-w-lg text-left mt-2">
             <label className="block text-slate-300 font-medium mb-2" htmlFor="persona">
               How should the assistant act?
@@ -246,16 +257,19 @@ function App() {
               placeholder="e.g. You are an angry pirate..."
             />
           </div>
-        </div>
-
-        {mode === 'realtime' ? (
-          <RealtimeAgent persona={persona} />
-        ) : mode === 'talk' ? (
-          <TalkAgent persona={persona} />
-        ) : (
-          <WhisperAgent persona={persona} />
         )}
-      </main>
+      </div>
+
+      {mode === 'realtime' ? (
+        <RealtimeAgent persona={persona} />
+      ) : mode === 'talk' ? (
+        <TalkAgent persona={persona} />
+      ) : mode === 'bookings' ? (
+        <BookingManager />
+      ) : (
+        <WhisperAgent persona={persona} />
+      )}
+    </main>
     </div>
   );
 }

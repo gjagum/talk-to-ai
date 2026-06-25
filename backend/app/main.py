@@ -1,14 +1,31 @@
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Vertical slices: each feature module owns its router + services.
+from app.core.database import Base, engine
 from app.features.voice import router as voice_router
 from app.features.realtime import router as realtime_router
 from app.features.agent import router as agent_router
+from app.features.booking import router as booking_router
 
-app = FastAPI(title="Talk to AI")
+# Import feature models so their tables are registered on Base.metadata before
+# create_all runs. (Models register themselves on import.)
+import app.features.booking.models  # noqa: F401
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Create DB tables on startup (idempotent). Uses create_all for now;
+    swap to Alembic migrations when a second persisted domain lands."""
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+
+
+app = FastAPI(title="Talk to AI", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -23,6 +40,7 @@ app.add_middleware(
 app.include_router(voice_router.router, prefix="/api/voice", tags=["voice"])
 app.include_router(realtime_router.router, prefix="/api/realtime", tags=["realtime"])
 app.include_router(agent_router.router, prefix="/api/agent", tags=["agent"])
+app.include_router(booking_router.router, prefix="/api/booking", tags=["booking"])
 
 if os.path.isdir("dist"):
     app.frontend("/", directory="dist")
