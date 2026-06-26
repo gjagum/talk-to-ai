@@ -1,0 +1,29 @@
+# Version control
+.git/
+.gitignore
+
+# Python (root level)
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Node (root level — but we use a sub-context via Dockerfile)
+node_modules/
+
+# Local dev
+.env
+.env.*
+**/.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# README
+README.md
