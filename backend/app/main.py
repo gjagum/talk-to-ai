@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 # Vertical slices: each feature module owns its router + services.
 from app.core.database import Base, engine
@@ -42,5 +43,7 @@ app.include_router(realtime_router.router, prefix="/api/realtime", tags=["realti
 app.include_router(agent_router.router, prefix="/api/agent", tags=["agent"])
 app.include_router(booking_router.router, prefix="/api/booking", tags=["booking"])
 
+# Serve the pre-built frontend from the dist/ directory (built by Docker or
+# manually via `npm run build`). Falls back to index.html for SPA routes.
 if os.path.isdir("dist"):
-    app.frontend("/", directory="dist")
+    app.mount("/", StaticFiles(directory="dist", html=True), name="frontend")

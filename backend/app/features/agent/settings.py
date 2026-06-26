@@ -19,6 +19,34 @@ DEFAULT_PERSONA = (
 )
 
 
+GJA_END_CALL_TOOL = {
+    "name": "gja_end_call",
+    "description": (
+        "End the conversation and disconnect the call IMMEDIATELY. "
+        "You MUST call this function AFTER you finish speaking your final sentence. "
+        "TRIGGERS (call this function whenever ANY of these happen): "
+        "1) Caller says goodbye, bye, thank you and goodbye, have a good day, or any farewell phrase. "
+        "2) Line is dead — no response from caller for more than 5 seconds. "
+        "3) Voicemail or answering machine detected. "
+        "4) Caller is clearly not a fit and the exchange is over. "
+        "5) Caller hangs up or the line disconnects. "
+        "IMPORTANT: Do NOT just stop talking. You MUST call this function to actually end the call. "
+        "Even if you already said bye, still call this function."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "reason": {
+                "type": "string",
+                "description": "Why the call is ending.",
+                "enum": ["goodbye", "voicemail", "dead_line", "not_a_fit", "caller_hung_up"],
+            }
+        },
+        "required": ["reason"],
+    },
+}
+
+
 def build_settings(persona: str) -> dict:
     """Build the Settings message sent after the Welcome handshake."""
     return {
@@ -43,6 +71,7 @@ def build_settings(persona: str) -> dict:
                     "headers": {"authorization": f"Bearer {Config.OPENAI_API_KEY}"},
                 },
                 "prompt": persona,
+                "functions": [GJA_END_CALL_TOOL],
             },
             "speak": {
                 "provider": {"type": "deepgram", "model": "aura-asteria-en"},

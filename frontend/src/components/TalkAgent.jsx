@@ -107,6 +107,11 @@ export default function TalkAgent({ persona }) {
             });
             break;
 
+          case 'EndCall':
+            setMessages((prev) => [...prev, { role: 'system', text: `Call ended by agent: ${msg.reason}` }]);
+            disconnect();
+            break;
+
           case 'Error':
             console.error('Deepgram error:', msg.description, msg.code);
             setMessages((prev) => [...prev, { role: 'system', text: `Error: ${msg.description || 'unknown'}` }]);
