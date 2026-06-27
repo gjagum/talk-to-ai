@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Waves, Zap, FileAudio, Headphones, CalendarDays } from 'lucide-react';
+import { Waves, Zap, FileAudio, Headphones, CalendarDays, UtensilsCrossed } from 'lucide-react';
 import RealtimeAgent from './components/RealtimeAgent';
 import WhisperAgent from './components/WhisperAgent';
 import TalkAgent from './components/TalkAgent';
 import BookingManager from './components/booking/BookingManager';
+import MenuManager from './components/menu/MenuManager';
 
 const DEFAULT_PERSONA = `#Identity
 You are:
@@ -261,9 +262,18 @@ function App() {
               <CalendarDays className="w-5 h-5" />
               Bookings
             </button>
+            <button 
+              onClick={() => setMode('menu')}
+              className={`flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all ${
+                mode === 'menu' ? 'bg-orange-600 text-white shadow-lg shadow-orange-500/25' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <UtensilsCrossed className="w-5 h-5" />
+              Drive-Thru
+            </button>
           </div>
 
-          {mode !== 'bookings' && (
+          {mode !== 'bookings' && mode !== 'menu' && (
           <div className="w-full max-w-lg text-left mt-2">
             <label className="block text-slate-300 font-medium mb-2" htmlFor="persona">
               How should the assistant act?
@@ -286,6 +296,20 @@ function App() {
         <TalkAgent persona={persona} />
       ) : mode === 'bookings' ? (
         <BookingManager />
+      ) : mode === 'menu' ? (
+        <div className="space-y-6">
+          <div className="glass-panel rounded-3xl p-6">
+            <h2 className="text-lg font-bold text-slate-100 mb-1 flex items-center gap-2">
+              <UtensilsCrossed className="w-5 h-5 text-orange-400" />
+              Drive-Thru Cashier (voice)
+            </h2>
+            <p className="text-slate-400 text-sm mb-4">
+              Riley takes the order over the phone and builds a draft in the dashboard below.
+            </p>
+            <TalkAgent persona={persona} mode="drive_thru" />
+          </div>
+          <MenuManager />
+        </div>
       ) : (
         <WhisperAgent persona={persona} />
       )}

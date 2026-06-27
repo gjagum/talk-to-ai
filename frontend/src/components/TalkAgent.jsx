@@ -12,7 +12,7 @@ import { PhoneCall, PhoneOff, Loader2, Mic } from 'lucide-react';
  *   - incoming agent audio arrives as Blob frames (binary WebSocket frames)
  *   - JSON control events arrive as text frames
  */
-export default function TalkAgent({ persona }) {
+export default function TalkAgent({ persona, mode = 'receptionist' }) {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [messages, setMessages] = useState([]);
@@ -48,8 +48,10 @@ export default function TalkAgent({ persona }) {
       wsRef.current = ws;
 
       ws.onopen = () => {
-        // First message: deliver the persona before any audio flows.
-        ws.send(JSON.stringify({ type: 'Init', persona }));
+        // First message: deliver the persona + mode before any audio flows.
+        // `mode` tells the relay which tool set / default persona + greeting
+        // to configure on Deepgram (e.g. 'drive_thru' registers menu tools).
+        ws.send(JSON.stringify({ type: 'Init', persona, mode }));
         setIsConnected(true);
         setIsConnecting(false);
         startMicrophone();
