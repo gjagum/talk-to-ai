@@ -12,16 +12,12 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from app.core.config import Config
 from app.core.database import AsyncSessionLocal
-from app.features.agent.settings import (
-    DEFAULT_DRIVE_THRU_PERSONA,
-    DEFAULT_PERSONA,
-    build_settings,
-)
-from app.features.menu import service as menu_service
-from app.features.menu.schemas import (
-    OrderCreate,
-    OrderItemAdd,
-    OrderItemUpdate,
+from app.features.agent import settings as legacy
+from app.features.agent_management import service as am_service
+from app.features.agent_management.models import Agent
+from app.features.agent_management.handlers import (
+    ToolCallContext,
+    get_handler,
 )
 
 DEEPGRAM_AGENT_WS_URL = "wss://agent.deepgram.com/v1/agent/converse"
@@ -87,19 +83,28 @@ async def _send_settings_and_wait(deepgram_ws, settings: dict) -> None:
             raise RuntimeError(f"Deepgram rejected Settings: {msg.get('description')}")
 
 
-async def _read_init_from_client(client_ws: WebSocket) -> tuple[str, str]:
-    """Wait for the browser's first text message containing the persona + mode.
+async def _read_init_from_client(client_ws: WebSocket) -> tuple[str, str, int | None, str | None]:
+    """Wait for the browser's first text message containing agent selection.
 
     The persona (system prompt) is too large to send via URL query string —
     it can easily exceed the WebSocket handshake's request-line size limit. So
     the browser sends it as the first JSON text frame after the socket opens.
-    Expected message:
-      {"type": "Init", "persona": "<system prompt>", "mode": "receptionist"}
-    `mode` selects the persona default / tool set; currently supports
-    `receptionist` (default) and `drive_thru`.
-    Returns (persona, mode).
+
+    New (data-driven) Init shape:
+      {"type":"Init", "agent_id": 3}
+      {"type":"Init", "agent_name": "drive_thru"}
+    Legacy shape (still supported for backward-compat):
+      {"type":"Init", "persona": "<sys prompt>", "mode": "receptionist|drive_thru"}
+
+    Returns (persona_or_blank, legacy_mode, agent_id, agent_name).
+    The caller resolves these in priority order: agent_id > agent_name >
+    legacy mode -> seeded Agent.
     """
     mode = "receptionist"
+    persona = ""
+    agent_id: int | None = None
+    agent_name: str | None = None
+
     try:
         while True:
             msg = await client_ws.receive()
@@ -108,19 +113,46 @@ async def _read_init_from_client(client_ws: WebSocket) -> tuple[str, str]:
                 if payload.get("type") == "Init":
                     persona = payload.get("persona") or ""
                     mode = (payload.get("mode") or "receptionist").strip()
-                    if persona:
-                        return persona, mode
-                    break  # empty persona → fall through to default
+                    if "agent_id" in payload and payload["agent_id"] is not None:
+                        try:
+                            agent_id = int(payload["agent_id"])
+                        except (TypeError, ValueError):
+                            agent_id = None
+                    raw_name = payload.get("agent_name")
+                    if raw_name:
+                        agent_name = str(raw_name).strip()
+                    return persona, mode, agent_id, agent_name
     except WebSocketDisconnect:
         raise
     except Exception as e:
-        print(f"Error reading Init/persona from client: {e}")
+        print(f"Error reading Init from client: {e}")
 
-    # Empty persona → use the default for the selected mode.
-    default_persona = (
-        DEFAULT_DRIVE_THRU_PERSONA if mode == "drive_thru" else DEFAULT_PERSONA
-    )
-    return default_persona, mode
+    return persona, mode, agent_id, agent_name
+
+
+async def _resolve_agent(
+    persona: str, mode: str, agent_id: int | None, agent_name: str | None
+) -> Agent | None:
+    """Pick the Agent row to drive the call.
+
+    Priority: explicit id > explicit name > legacy `mode` (mapped to a seeded
+    Agent name) > None (caller falls back to legacy constants).
+    """
+    async with AsyncSessionLocal() as session:
+        if agent_id is not None:
+            agent = await am_service.get_agent(session, agent_id)
+            if agent and agent.is_active:
+                return agent
+        if agent_name:
+            agent = await am_service.get_agent_by_name(session, agent_name)
+            if agent and agent.is_active:
+                return agent
+        # Legacy fallback: map the mode to a seeded Agent name.
+        seeded_name = "drive_thru" if mode == "drive_thru" else "receptionist"
+        agent = await am_service.get_agent_by_name(session, seeded_name)
+        if agent and agent.is_active:
+            return agent
+    return None
 
 
 async def _pump_browser_to_deepgram(client_ws: WebSocket, deepgram_ws):
@@ -140,13 +172,16 @@ async def _pump_browser_to_deepgram(client_ws: WebSocket, deepgram_ws):
         print(f"Error in browser→deepgram pump: {e}")
 
 
-async def _pump_deepgram_to_browser(deepgram_ws, client_ws: WebSocket):
+async def _pump_deepgram_to_browser(deepgram_ws, client_ws: WebSocket, agent: Agent | None):
     """Deepgram -> Browser. Forward JSON events as text, binary audio as bytes.
 
     End-call triggers (any one of these fires once, then the pump drains):
-      1. FunctionCallRequest for gja_end_call (primary — LLM tool calling).
+      1. FunctionCallRequest for the registered end-call tool (primary — LLM tool calling).
       2. Assistant ConversationText ending in a farewell phrase (fallback).
       3. Dead air: AgentAudioDone followed by >DEAD_AIR_TIMEOUT s of silence.
+
+    `agent` carries the tools used by `_handle_function_call` to resolve the
+    handler_key per function name. None when running on the legacy fallback.
     """
     ended = asyncio.Event()
     dead_air_task = None
@@ -199,7 +234,7 @@ async def _pump_deepgram_to_browser(deepgram_ws, client_ws: WebSocket):
             # ── trigger 1: LLM tool calling ──
             if dg_type == "FunctionCallRequest":
                 print(f"DG→relay: FunctionCallRequest {json.dumps(msg)}")
-                await _handle_function_call(deepgram_ws, client_ws, msg, ended)
+                await _handle_function_call(deepgram_ws, client_ws, msg, ended, agent)
                 continue
 
             # ── trigger 2: farewell phrase in assistant text ──
@@ -248,139 +283,37 @@ async def _send_function_response(
     )
 
 
-async def _run_menu_tool(func_name: str, arguments: dict) -> dict:
-    """Execute one menu tool inside its own session and commit.
+async def _handle_function_call(
+    deepgram_ws,
+    client_ws: WebSocket,
+    msg: dict,
+    ended: asyncio.Event,
+    agent: Agent | None,
+) -> None:
+    """Dispatch a FunctionCallRequest to the registered handler and reply.
 
-    The WebSocket relay is not inside FastAPI's request scope, so it does not
-    use `get_db`. Each tool call opens a fresh `AsyncSessionLocal` session,
-    runs the corresponding `menu.service` function, commits, and returns a
-    small dict that becomes the FunctionCallResponse content. On ValidationError
-    / ValueError the returned dict carries an `error` key (no exception escapes
-    the WebSocket loop); the LLM reads the error and adapts its next turn.
-    """
-    async with AsyncSessionLocal() as session:
-        try:
-            if func_name == "gja_get_menu":
-                category = arguments.get("category")
-                items = await menu_service.list_menu(
-                    session, category=category, available_only=True
-                )
-                return {
-                    "items": [
-                        {
-                            "id": it.id,
-                            "name": it.name,
-                            "description": it.description,
-                            "price_cents": it.price_cents,
-                            "category": it.category,
-                            "is_available": it.is_available,
-                        }
-                        for it in items
-                    ]
-                }
-
-            if func_name == "gja_create_order":
-                order_type = arguments.get("order_type", "drive_thru")
-                payload = OrderCreate(order_type=order_type)
-                order = await menu_service.create_order(session, payload)
-                await session.commit()
-                return {"order_id": order.id, "status": order.status, "items": [], "total_cents": 0}
-
-            if func_name == "gja_add_item":
-                order_id = int(arguments.get("order_id", 0))
-                menu_item_id = int(arguments.get("menu_item_id", 0))
-                quantity = int(arguments.get("quantity", 1) or 1)
-                notes = arguments.get("notes")
-                payload = OrderItemAdd(
-                    menu_item_id=menu_item_id, quantity=quantity, notes=notes
-                )
-                order = await menu_service.add_item_to_order(session, order_id, payload)
-                await session.commit()
-                return _serialize_order(order)
-
-            if func_name == "gja_update_item":
-                order_id = int(arguments.get("order_id", 0))
-                item_id = int(arguments.get("item_id", 0))
-                quantity = arguments.get("quantity")
-                notes = arguments.get("notes")
-                payload = OrderItemUpdate(
-                    quantity=int(quantity) if quantity is not None else None,
-                    notes=notes,
-                )
-                order = await menu_service.update_order_item(
-                    session, order_id, item_id, payload
-                )
-                await session.commit()
-                return _serialize_order(order)
-
-            if func_name == "gja_finalize_order":
-                order_id = int(arguments.get("order_id", 0))
-                order = await menu_service.finalize_order(
-                    session,
-                    order_id,
-                    customer_name=arguments.get("customer_name"),
-                    customer_phone=arguments.get("customer_phone"),
-                    order_type=arguments.get("order_type"),
-                    notes=arguments.get("notes"),
-                )
-                await session.commit()
-                return _serialize_order(order)
-
-            return {"error": f"Unknown menu tool: {func_name}"}
-        except (ValueError, TypeError) as e:
-            # Bad arguments: missing item, wrong status, empty finalize, etc.
-            # Rollback and surface as an error result — the LLM will adapt.
-            await session.rollback()
-            return {"error": str(e)}
-        except Exception as e:
-            await session.rollback()
-            print(f"Menu tool {func_name} failed: {e}")
-            return {"error": f"Internal error in {func_name}"}
-
-
-def _serialize_order(order) -> dict:
-    """Flatten an Order ORM object to a dict for FunctionCallResponse.
-
-    Kept inline (next to the relay) rather than in schemas because the WebSocket
-    path can't reuse the Pydantic response_model serialization — we want a
-    plain dict here. `order.items` must be eager-loaded (service does this).
-    """
-    return {
-        "order_id": order.id,
-        "status": order.status,
-        "customer_name": order.customer_name,
-        "order_type": order.order_type,
-        "total_cents": order.total_cents,
-        "items": [
-            {
-                "item_id": it.id,
-                "menu_item_id": it.menu_item_id,
-                "name": it.name_snapshot,
-                "unit_price_cents": it.unit_price_cents,
-                "quantity": it.quantity,
-                "notes": it.notes,
-            }
-            for it in order.items
-        ],
-    }
-
-
-_MENU_TOOLS = (
-    "gja_get_menu",
-    "gja_create_order",
-    "gja_add_item",
-    "gja_update_item",
-    "gja_finalize_order",
-)
-
-
-async def _handle_function_call(deepgram_ws, client_ws: WebSocket, msg: dict, ended: asyncio.Event) -> None:
-    """Dispatch a FunctionCallRequest to the correct tool and reply.
+    Looks up each requested tool by name on the active `Agent`, resolves its
+    `handler_key` to a registered async callable, and runs it with a
+    `ToolCallContext` that carries an `on_terminate` closure attached to this
+    relay's `ended` event — so e.g. `system.end_call` ends the call without the
+    relay needing to hardcode `gja_end_call`.
 
     Deepgram sends `functions: [...]` (an array); we iterate every entry and
-    send one FunctionCallResponse per call. `gja_end_call` is the only tool
-    that also tears down the call — every other tool just executes and replies.
+    send one FunctionCallResponse per call.
     """
+    # Build a name -> handler_key map for this agent once per request.
+    tool_map: dict[str, str] = {}
+    if agent is not None:
+        for t in agent.tools:
+            if t.is_active:
+                tool_map[t.name] = t.handler_key
+
+    async def _on_terminate(reason: str = "goodbye") -> None:
+        """Closure the end-call handler calls to actually tear down the call."""
+        if not ended.is_set():
+            ended.set()
+            asyncio.create_task(_send_end_call(client_ws, reason))
+
     functions = msg.get("functions", [])
     for func in functions:
         func_id = func.get("id", "")
@@ -391,45 +324,74 @@ async def _handle_function_call(deepgram_ws, client_ws: WebSocket, msg: dict, en
         except (TypeError, ValueError):
             arguments = {}
 
-        # ── terminal tool: end the call ──
-        if func_name == "gja_end_call":
-            reason = arguments.get("reason", "goodbye")
-            print(f"gja_end_call invoked (reason={reason})")
-
+        handler_key = tool_map.get(func_name)
+        handler = get_handler(handler_key) if handler_key else None
+        if handler is None:
+            print(f"Unknown function call (no handler for {func_name!r})")
             await _send_function_response(
-                deepgram_ws, func_id, func_name, {"status": "ok", "reason": reason}
+                deepgram_ws,
+                func_id,
+                func_name,
+                {"error": f"No handler registered for tool {func_name!r}"},
             )
-
-            ended.set()
-            asyncio.create_task(_send_end_call(client_ws, reason))
             continue
 
-        # ── drive-thru ordering tools ──
-        if func_name in _MENU_TOOLS:
-            print(f"{func_name} invoked with {arguments}")
-            result = await _run_menu_tool(func_name, arguments)
-            await _send_function_response(deepgram_ws, func_id, func_name, result)
-            if "error" in result:
-                print(f"  {func_name} → error: {result['error']}")
-            else:
-                # Brief success log — whatever the LLM most needs to confirm.
-                if "order_id" in result:
-                    print(
-                        f"  {func_name} → order#{result.get('order_id')} "
-                        f"status={result.get('status')} "
-                        f"total={result.get('total_cents')}c "
-                        f"lines={len(result.get('items', []))}"
-                    )
-            continue
+        ctx = ToolCallContext(tool_name=func_name, on_terminate=_on_terminate)
+        print(f"{func_name} invoked (handler={handler_key}) with {arguments}")
+        try:
+            result = await handler(ctx, arguments)
+        except (ValueError, TypeError) as e:
+            result = {"error": str(e)}
+        except Exception as e:
+            print(f"Handler {handler_key} for {func_name} failed: {e}")
+            result = {"error": f"Internal error in {func_name}"}
 
-        print(f"Unknown function call: {func_name}")
+        await _send_function_response(deepgram_ws, func_id, func_name, result)
+        if isinstance(result, dict) and "error" in result:
+            print(f"  {func_name} → error: {result['error']}")
+        elif isinstance(result, dict) and "order_id" in result:
+            print(
+                f"  {func_name} → order#{result.get('order_id')} "
+                f"status={result.get('status')} "
+                f"total={result.get('total_cents')}c "
+                f"lines={len(result.get('items', []))}"
+            )
 
 
 async def relay(client_ws: WebSocket) -> None:
     """Run the full Deepgram Voice Agent session for one connected browser."""
-    # Persona + mode arrive as the first client message (too large for the URL).
-    persona, mode = await _read_init_from_client(client_ws)
-    drive_thru = mode == "drive_thru"
+    # Persona/mode (legacy) or agent_id/agent_name (new) arrive as the first
+    # client message — too large for the URL.
+    persona, mode, agent_id, agent_name = await _read_init_from_client(client_ws)
+
+    agent = await _resolve_agent(persona, mode, agent_id, agent_name)
+    if agent is not None:
+        # Eager-load the agent's tools so the relay dispatcher can read them
+        # without an extra round-trip per FunctionCallRequest.
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy.orm import selectinload
+            from sqlalchemy import select
+            stmt = (
+                select(Agent).options(selectinload(Agent.tools)).where(Agent.id == agent.id)
+            )
+            res = await session.execute(stmt)
+            fresh = res.scalar_one_or_none()
+            if fresh is not None:
+                agent = fresh
+        settings_payload = am_service.assemble_settings(agent)
+        print(
+            f"Relay using DB agent id={agent.id} name={agent.name!r} "
+            f"tools={[t.name for t in agent.tools]}"
+        )
+    else:
+        # Fall back to legacy constants if the dashboard hasn't seeded yet.
+        drive_thru = mode == "drive_thru"
+        settings_payload = legacy.build_settings(
+            persona_or_drive_thru_fallback(persona, mode), drive_thru=drive_thru
+        )
+        print(
+            f"Relay using LEGACY settings (no active agent for mode={mode!r})."
+        )
 
     headers = {"Authorization": f"Token {Config.DEEPGRAM_API_KEY}"}
 
@@ -439,13 +401,13 @@ async def relay(client_ws: WebSocket) -> None:
 
             # Handshake: Welcome -> Settings -> SettingsApplied
             await _wait_for_welcome(deepgram_ws)
-            await _send_settings_and_wait(
-                deepgram_ws, build_settings(persona, drive_thru=drive_thru)
-            )
+            await _send_settings_and_wait(deepgram_ws, settings_payload)
 
             # Audio pumps run only after the handshake completes.
             task_client = asyncio.create_task(_pump_browser_to_deepgram(client_ws, deepgram_ws))
-            task_deepgram = asyncio.create_task(_pump_deepgram_to_browser(deepgram_ws, client_ws))
+            task_deepgram = asyncio.create_task(
+                _pump_deepgram_to_browser(deepgram_ws, client_ws, agent)
+            )
 
             done, pending = await asyncio.wait(
                 [task_client, task_deepgram],
@@ -461,3 +423,10 @@ async def relay(client_ws: WebSocket) -> None:
             )
         except Exception:
             pass
+
+
+def persona_or_drive_thru_fallback(persona: str, mode: str) -> str:
+    """Pick the persona for the legacy fallback path."""
+    if persona:
+        return persona
+    return legacy.DEFAULT_DRIVE_THRU_PERSONA if mode == "drive_thru" else legacy.DEFAULT_PERSONA
