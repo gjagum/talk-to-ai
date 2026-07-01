@@ -60,7 +60,13 @@ async def get_agent_by_name(session: AsyncSession, name: str) -> Agent | None:
 
 async def assign_tools(session: AsyncSession, agent: Agent, tool_ids: list[int]) -> None:
     """Replace the agent's tool assignment with `tool_ids`."""
-    agent.tools = await get_tools_by_ids(session, tool_ids)
+    tools = await get_tools_by_ids(session, tool_ids)
+    # Eagerly load the current collection first. Without this, assigning to
+    # `agent.tools` triggers a synchronous lazy-load to diff the association
+    # table, which raises MissingGreenlet under asyncpg (and used to kill the
+    # FastAPI lifespan startup before the server could bind its port).
+    await session.refresh(agent, attribute_names=["tools"])
+    agent.tools = tools
     await session.flush()
 
 
