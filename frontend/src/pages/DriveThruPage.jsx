@@ -1,15 +1,15 @@
 import React, { useState } from 'react';
 import { UtensilsCrossed } from 'lucide-react';
 import TalkAgent from '../components/TalkAgent';
+import PersonaEditor from '../components/PersonaEditor';
 import MenuManager from '../components/menu/MenuManager';
 import { DEFAULT_PERSONA, DEFAULT_DRIVE_THRU_PERSONA } from '../lib/personas';
 
 /**
  * DriveThruPage — the Drive-Thru cashier demo + order dashboard.
  *
- * Splits the original in-line JSX from App.jsx into its own route. Kept the
- * same persona defaulting (the drive-thru persona is used unless the user
- * edits the textarea) and the TalkAgent + MenuManager pairing.
+ * Persona is loaded from the DB via PersonaEditor; if no saved persona exists,
+ * the hardcoded DEFAULT_DRIVE_THRU_PERSONA is used and shown as the default.
  */
 export default function DriveThruPage() {
   const [persona, setPersona] = useState(DEFAULT_DRIVE_THRU_PERSONA);
@@ -25,20 +25,15 @@ export default function DriveThruPage() {
           Riley takes the order over the phone and builds a draft in the dashboard below.
         </p>
 
-        <div className="text-left mb-4">
-          <label className="block text-slate-300 font-medium mb-2" htmlFor="dt-persona">
-            Persona
-          </label>
-          <textarea
-            id="dt-persona"
-            value={persona}
-            onChange={(e) => setPersona(e.target.value)}
-            className="w-full bg-slate-800/50 border border-slate-700 rounded-xl p-4 text-slate-200 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-all resize-none"
-            rows="4"
-          />
-        </div>
+        <PersonaEditor
+          agentName="drive_thru"
+          defaultPersona={DEFAULT_DRIVE_THRU_PERSONA}
+          onPersonaChange={setPersona}
+        />
 
-        <TalkAgent persona={persona} mode="drive_thru" />
+        <div className="mt-4">
+          <TalkAgent persona={persona} mode="drive_thru" />
+        </div>
       </div>
       <MenuManager />
     </div>

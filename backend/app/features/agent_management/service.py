@@ -58,6 +58,35 @@ async def get_agent_by_name(session: AsyncSession, name: str) -> Agent | None:
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
+async def get_persona_by_name(session: AsyncSession, name: str) -> str | None:
+    """Return the persona for `name`, or None if the agent doesn't exist.
+
+    Used by the public persona endpoint on the voice-demo pages — the caller
+    falls back to its own hardcoded default when this returns None.
+    """
+    stmt = select(Agent.persona).where(Agent.name == name)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def set_persona_by_name(
+    session: AsyncSession, name: str, persona: str
+) -> Agent | None:
+    """Update the persona for an existing agent. Creates the agent (with
+    placeholder defaults) if it doesn't exist, so the public PUT endpoint is
+    idempotent even before the seeder has run.
+
+    Returns the agent (committed by the caller) or None if `name` is not on
+    the public allowlist.
+    """
+    agent = await get_agent_by_name(session, name)
+    if agent is None:
+        # Don't fabricate arbitrary agents; only the seeded canon is writable
+        # from the public demo surface.
+        return None
+    agent.persona = persona
+    return agent
+
+
 async def assign_tools(session: AsyncSession, agent: Agent, tool_ids: list[int]) -> None:
     """Replace the agent's tool assignment with `tool_ids`."""
     tools = await get_tools_by_ids(session, tool_ids)

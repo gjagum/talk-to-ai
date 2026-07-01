@@ -3,6 +3,7 @@ import { Zap, FileAudio, Headphones } from 'lucide-react';
 import RealtimeAgent from '../components/RealtimeAgent';
 import WhisperAgent from '../components/WhisperAgent';
 import TalkAgent from '../components/TalkAgent';
+import PersonaEditor from '../components/PersonaEditor';
 import { DEFAULT_PERSONA } from '../lib/personas';
 
 /**
@@ -50,19 +51,11 @@ export default function HomePage() {
           </button>
         </div>
 
-        <div className="w-full max-w-lg text-left">
-          <label className="block text-slate-300 font-medium mb-2" htmlFor="persona">
-            How should the assistant act?
-          </label>
-          <textarea
-            id="persona"
-            value={persona}
-            onChange={(e) => setPersona(e.target.value)}
-            className="w-full bg-slate-800/50 border border-slate-700 rounded-xl p-4 text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all resize-none"
-            rows="4"
-            placeholder="e.g. You are an angry pirate..."
-          />
-        </div>
+        <PersonaEditor
+          agentName="receptionist"
+          defaultPersona={DEFAULT_PERSONA}
+          onPersonaChange={setPersona}
+        />
       </div>
 
       {mode === 'realtime' ? (

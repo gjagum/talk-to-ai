@@ -98,9 +98,14 @@ app.include_router(menu_router.router, prefix="/api/menu", tags=["menu"])
 # Auth + admin routes (permission-gated dashboard API).
 from app.features.auth import router as auth_router
 from app.features.agent_management import router as am_router
+from app.features.agent_management import public_router as am_public_router
 
 app.include_router(auth_router.router, prefix="/api/auth", tags=["auth"])
 app.include_router(am_router.router, prefix="/api/admin", tags=["admin"])
+# Public persona read/write for the voice-demo pages (allowlisted to the two
+# canonical seeded agents). Mounted at root so the public paths are
+# /api/agents/<name>/persona.
+app.include_router(am_public_router.router, prefix="/api", tags=["agent-persona"])
 
 # Serve the pre-built frontend from the dist/ directory (built by Docker or
 # manually via `npm run build`). Falls back to index.html for SPA routes.
