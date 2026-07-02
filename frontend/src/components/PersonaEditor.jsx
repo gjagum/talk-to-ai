@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Pencil, Save, Loader2, RotateCcw } from 'lucide-react';
+import { Pencil, Save, Loader2, RotateCcw, User, Mail, Phone } from 'lucide-react';
 import { apiGet, apiPut } from '../lib/api';
 import { Button } from './ui/button';
+import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 import {
   Dialog,
@@ -21,17 +22,35 @@ import {
  *   • On mount, GET /agents/<name>/persona. If the DB has a saved persona,
  *     that wins. If it returns `null` (agent not seeded / never saved), fall
  *     back to `defaultPersona` so the demo is always usable.
- *   • The compact preview shows the in-memory persona (truncated). The Edit
- *     button opens a Radix-ported Dialog with a large Textarea for editing —
- *     properly focus-trapped, ESC-to-close, outside-click-to-close.
- *   • Save PUTs to /agents/<name>/persona and closes the dialog.
+ *   • The compact preview shows the in-memory persona (truncated) with any
+ *     {{name}} and {{email}} placeholders substituted from the name/email inputs.
+ *   • The Edit button opens a Radix-ported Dialog with a large Textarea for
+ *     editing the raw template — properly focus-trapped, ESC-to-close,
+ *     outside-click-to-close.
+ *   • Save PUTs the raw template to /agents/<name>/persona and closes the dialog.
  *   • Reset to Default restores the hardcoded `defaultPersona` locally — it
  *     does NOT wipe the saved copy in the DB until the user also hits Save.
+ *
+ * {{name}} and {{email}} are resolved client-side before the persona is passed
+ * to onPersonaChange / the voice agent. The raw template (with placeholders) is
+ * what gets saved to the DB so variable substitution works on every call.
  */
+
+function resolvePersona(raw, name, email, phone) {
+  if (!raw) return '';
+  return raw
+    .replaceAll('{{name}}', name || '')
+    .replaceAll('{{email}}', email || '')
+    .replaceAll('{{phone}}', phone || '');
+}
+
 export default function PersonaEditor({
   agentName,
   defaultPersona,
   onPersonaChange,
+  defaultName = '',
+  defaultEmail = '',
+  defaultPhone = '',
   placeholder = 'Describe how the assistant should behave…',
 }) {
   const [persona, setPersona] = useState(defaultPersona);
@@ -42,6 +61,10 @@ export default function PersonaEditor({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
+  const [name, setName] = useState(defaultName);
+  const [email, setEmail] = useState(defaultEmail);
+  const [phone, setPhone] = useState(defaultPhone);
+
   const loadPersona = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -50,27 +73,26 @@ export default function PersonaEditor({
       if (typeof data.persona === 'string' && data.persona.length > 0) {
         setPersona(data.persona);
         setSource('db');
-        onPersonaChange?.(data.persona);
       } else {
         setPersona(defaultPersona);
         setSource('default');
-        onPersonaChange?.(defaultPersona);
       }
     } catch {
       setPersona(defaultPersona);
       setSource('default');
-      onPersonaChange?.(defaultPersona);
     } finally {
       setLoading(false);
     }
-  }, [agentName, defaultPersona, onPersonaChange]);
+  }, [agentName, defaultPersona]);
 
   useEffect(() => { loadPersona(); }, [loadPersona]);
 
-  useEffect(() => { onPersonaChange?.(persona); }, [persona]); // eslint-disable-line
+  // Notify parent whenever the resolved persona changes (raw + variables).
+  const resolved = resolvePersona(persona, name, email, phone);
+  useEffect(() => { onPersonaChange?.(resolved); }, [resolved]); // eslint-disable-line
 
   const openDialog = () => {
-    setDraft(persona);
+    setDraft(persona); // raw template in the editor
     setError(null);
     setOpen(true);
   };
@@ -86,7 +108,7 @@ export default function PersonaEditor({
       const saved = typeof data.persona === 'string' && data.persona.length > 0
         ? data.persona
         : draft;
-      setPersona(saved);
+      setPersona(saved); // raw template (with placeholders) saved to state
       setSource('db');
       setOpen(false);
     } catch (err) {
@@ -98,10 +120,63 @@ export default function PersonaEditor({
 
   const previewText = loading
     ? 'Loading persona…'
-    : persona?.trim() || '— no persona set —';
+    : resolved?.trim() || '— no persona set —';
 
   return (
     <div className="w-full max-w-lg text-left">
+      {/* ── Variable inputs (name / email) ── */}
+      <div className="mb-4 space-y-3">
+        <div>
+          <label className="block text-slate-300 font-medium text-sm mb-1" htmlFor={`name-${agentName}`}>
+            <User className="w-3.5 h-3.5 inline mr-1.5 -mt-0.5 text-slate-400" />
+            Your Name
+          </label>
+          <Input
+            id={`name-${agentName}`}
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Jane Doe"
+            className="bg-slate-800/50 border-slate-700 text-slate-200 placeholder:text-slate-500 focus-visible:ring-blue-500"
+          />
+        </div>
+        <div>
+          <label className="block text-slate-300 font-medium text-sm mb-1" htmlFor={`email-${agentName}`}>
+            <Mail className="w-3.5 h-3.5 inline mr-1.5 -mt-0.5 text-slate-400" />
+            Your Email
+          </label>
+          <Input
+            id={`email-${agentName}`}
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="e.g. jane@example.com"
+            className="bg-slate-800/50 border-slate-700 text-slate-200 placeholder:text-slate-500 focus-visible:ring-blue-500"
+          />
+        </div>
+        <div>
+          <label className="block text-slate-300 font-medium text-sm mb-1" htmlFor={`phone-${agentName}`}>
+            <Phone className="w-3.5 h-3.5 inline mr-1.5 -mt-0.5 text-slate-400" />
+            Your Phone
+          </label>
+          <Input
+            id={`phone-${agentName}`}
+            type="tel"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="e.g. +1 555 000 1234"
+            className="bg-slate-800/50 border-slate-700 text-slate-200 placeholder:text-slate-500 focus-visible:ring-blue-500"
+          />
+        </div>
+        <p className="text-xs text-slate-500 italic">
+          Use <code className="text-amber-400 bg-amber-400/10 px-1 rounded text-xs">{'{{name}}'}</code>,{' '}
+          <code className="text-amber-400 bg-amber-400/10 px-1 rounded text-xs">{'{{email}}'}</code>, and{' '}
+          <code className="text-amber-400 bg-amber-400/10 px-1 rounded text-xs">{'{{phone}}'}</code> in the
+          persona below — they&apos;ll be filled in automatically.
+        </p>
+      </div>
+
+      {/* ── Persona section ── */}
       <div className="flex items-center justify-between mb-2">
         <label className="block text-slate-300 font-medium" htmlFor={`persona-${agentName}`}>
           How should the assistant act?
@@ -146,6 +221,9 @@ export default function PersonaEditor({
             <DialogTitle>Edit Persona</DialogTitle>
             <DialogDescription className="text-slate-400">
               Agent: <code className="text-slate-300">{agentName}</code> · saved to the database on Save.
+              {' '}Variables <code className="text-amber-400">{'{{name}}'}</code>,{' '}
+              <code className="text-amber-400">{'{{email}}'}</code>, and{' '}
+              <code className="text-amber-400">{'{{phone}}'}</code> are resolved at runtime.
             </DialogDescription>
           </DialogHeader>
 

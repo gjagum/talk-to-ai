@@ -18,6 +18,7 @@ Two operating modes:
                                 `gja_finalize_order`) plus `gja_end_call`.
 """
 from app.core.config import Config
+from app.features.agent.render import render_persona
 
 # One-time greeting the agent speaks when the caller connects.
 DEFAULT_GREETING = "Hi! You've reached Kinetic Innovative Staffing. This is Ryan. How can I help you today?"
@@ -239,7 +240,7 @@ DRIVE_THRU_TOOLS = [
 GJA_CONTACT_GET_TOOL = {
     "name": "gja_contact_get",
     "description": (
-        "Look up a contact by email and/or phone number. Returns the contact's id, "
+        "Look up a contact by name, email, and/or phone number. Returns the contact's id, "
         "full_name, email, phone, timezone, and city if found, or an empty result if "
         "no match. Always call this before `gja_contact_create` or `gja_create_event` "
         "to avoid duplicates."
@@ -247,6 +248,10 @@ GJA_CONTACT_GET_TOOL = {
     "parameters": {
         "type": "object",
         "properties": {
+            "name": {
+                "type": "string",
+                "description": "Contact's full name to search for.",
+            },
             "email": {
                 "type": "string",
                 "description": "Contact email address to search for.",
@@ -264,7 +269,7 @@ GJA_CONTACT_GET_TOOL = {
 GJA_CONTACT_CREATE_TOOL = {
     "name": "gja_contact_create",
     "description": (
-        "Create or update a contact. Provide at least full_name and email. If a contact "
+        "Create or update a contact. Provide at least name and email. If a contact "
         "with that email already exists, the fields are updated instead (idempotent upsert). "
         "Returns the contact's id, full_name, email, phone, timezone, and city. "
         "You MUST have a contact id to use `gja_create_event`."
@@ -272,7 +277,7 @@ GJA_CONTACT_CREATE_TOOL = {
     "parameters": {
         "type": "object",
         "properties": {
-            "full_name": {
+            "name": {
                 "type": "string",
                 "description": "Contact's full name (required).",
             },
@@ -296,7 +301,7 @@ GJA_CONTACT_CREATE_TOOL = {
                 "description": "City or state the contact is in.",
             },
         },
-        "required": ["full_name", "email"],
+        "required": ["name", "email"],
     },
 }
 
@@ -419,7 +424,7 @@ def build_settings(persona: str, *, drive_thru: bool = False) -> dict:
                     "url": "https://api.openai.com/v1/chat/completions",
                     "headers": {"authorization": f"Bearer {Config.OPENAI_API_KEY}"},
                 },
-                "prompt": effective_persona,
+                "prompt": render_persona(effective_persona),
                 "functions": functions,
             },
             "speak": {

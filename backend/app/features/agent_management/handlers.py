@@ -256,12 +256,13 @@ def _serialize_booking(booking) -> dict:
     }
 
 
-@register("booking.contact_get", "Find a contact by email/phone")
+@register("booking.contact_get", "Find a contact by name/email/phone")
 async def _contact_get(ctx: ToolCallContext, arguments: dict) -> dict:
     async with AsyncSessionLocal() as session:
         try:
             contact = await booking_service.find_contact(
                 session,
+                full_name=arguments.get("name"),
                 email=arguments.get("email"),
                 phone=arguments.get("phone"),
             )
@@ -281,7 +282,7 @@ async def _contact_create(ctx: ToolCallContext, arguments: dict) -> dict:
             contact = await booking_service.get_or_create_contact(
                 session,
                 email=arguments["email"],
-                full_name=arguments.get("full_name"),
+                full_name=arguments.get("name"),
                 phone=arguments.get("phone"),
                 timezone_name=arguments.get("timezone"),
                 city=arguments.get("city"),

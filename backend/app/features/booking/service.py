@@ -18,7 +18,7 @@ storage, comparison, and conversion stay unambiguous.
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -111,31 +111,44 @@ async def create_contact(session: AsyncSession, payload: ContactCreate) -> Conta
 
 
 async def find_contact(
-    session: AsyncSession, *, email: str | None = None, phone: str | None = None
+    session: AsyncSession, *,
+    full_name: str | None = None,
+    email: str | None = None,
+    phone: str | None = None,
 ) -> Contact | None:
-    """Look up a contact by email and/or phone.
+    """Look up a contact by full_name, email, and/or phone.
 
-    Backs the AI-caller tool `gja_contact_get`.
+    Backs the AI-caller tool `gja_contact_get`. At least one criterion is
+    required. When multiple are given, any row matching ANY criterion is a
+    candidate; ties are broken by preferring an email match, then a phone
+    match, then a name match.
     """
-    if not email and not phone:
+    if not full_name and not email and not phone:
         return None
     stmt = select(Contact)
-    if email and phone:
-        stmt = stmt.where((Contact.email == email) | (Contact.phone == phone))
-    elif email:
-        stmt = stmt.where(Contact.email == email)
-    else:
-        stmt = stmt.where(Contact.phone == phone)
+    clauses = []
+    if email:
+        clauses.append(Contact.email == email)
+    if phone:
+        clauses.append(Contact.phone == phone)
+    if full_name:
+        clauses.append(Contact.full_name == full_name)
+    stmt = stmt.where(or_(*clauses))
     result = await session.execute(stmt)
-    # Prefer email match if both given
     contacts = result.scalars().all()
     if not contacts:
         return None
     if len(contacts) == 1:
         return contacts[0]
-    # Multiple matched (email OR phone) — prefer the one whose email matches.
+    # Multiple matched (OR across criteria) — prefer email, then phone, then name.
     for c in contacts:
         if email and c.email == email:
+            return c
+    for c in contacts:
+        if phone and c.phone == phone:
+            return c
+    for c in contacts:
+        if full_name and c.full_name == full_name:
             return c
     return contacts[0]
 
@@ -170,10 +183,13 @@ async def check_availability(
     start_local = datetime.combine(day_in_consultant.date(), WORKING_HOURS[0], tzinfo=con_tz)
     end_local = datetime.combine(day_in_consultant.date(), WORKING_HOURS[1], tzinfo=con_tz)
 
-    # Pull confirmed bookings whose window overlaps the working day.
+    # Pull bookings whose window overlaps the working day. Pending bookings
+    # also block slots so the availability view matches create_booking's
+    # anti-double-book logic (which rejects pending + confirmed). Cancelled
+    # and completed bookings are ignored so their slots free up again.
     overlap_stmt = (
         select(Booking)
-        .where(Booking.status == "confirmed")
+        .where(Booking.status.in_(("pending", "confirmed")))
         .where(Booking.requested_at < end_local.astimezone(timezone.utc))
         .where(Booking.requested_at + timedelta(minutes=SLOT_MINUTES) > start_local.astimezone(timezone.utc))
     )

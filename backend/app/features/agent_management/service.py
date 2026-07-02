@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import Config
 from app.features.agent_management.models import Agent, Tool
+from app.features.agent.render import render_persona
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +155,7 @@ def assemble_settings(agent: Agent, *, tools: list[Tool] | None = None) -> dict:
                     "url": "https://api.openai.com/v1/chat/completions",
                     "headers": {"authorization": f"Bearer {Config.OPENAI_API_KEY}"},
                 },
-                "prompt": agent.persona,
+                "prompt": render_persona(agent.persona),
                 "functions": functions,
             },
             "speak": {

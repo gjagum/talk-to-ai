@@ -34,6 +34,10 @@ export default function BookingManager() {
 
   useEffect(() => {
     fetchBookings();
+    // Poll so bookings created by the voice agent (over the agent WebSocket,
+    // a separate path from this REST list) appear without a manual refresh.
+    const interval = setInterval(fetchBookings, 10000);
+    return () => clearInterval(interval);
   }, [fetchBookings]);
 
   const handleCreated = useCallback(
@@ -85,7 +89,7 @@ export default function BookingManager() {
       </div>
 
       {/* Calendar with slot picker */}
-      <BookingCalendar onBook={handleBook} />
+      <BookingCalendar onBook={handleBook} bookings={bookings} />
 
       {/* Modal for creating the booking */}
       <BookingModal

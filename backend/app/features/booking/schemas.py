@@ -9,7 +9,8 @@ wire; `timezone` on Contact/AvailabilityRequest is an IANA tz name (e.g.
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from email_validator import EmailNotValidError, validate_email
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 # ---------------------------------------------------------------------------
@@ -24,16 +25,35 @@ class ContactCreate(BaseModel):
 
 
 class ContactRead(BaseModel):
+    """Read shape for a Contact.
+
+    `email` is validated on write (ContactCreate uses EmailStr), but legacy or
+    agent-written rows can hold malformed values (e.g. an unrendered `{{email}}`
+    placeholder). A single bad row would otherwise 500 the whole bookings list,
+    so on read we coerce invalid emails to a placeholder rather than raising.
+    """
+
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     full_name: str
-    email: EmailStr
+    email: str
     phone: str | None = None
     timezone: str | None = None
     city: str | None = None
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def _coerce_invalid_email(cls, v):
+        if v is None:
+            return "(invalid)"
+        try:
+            validate_email(v, check_deliverability=False)
+        except EmailNotValidError:
+            return "(invalid)"
+        return str(v)
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +105,7 @@ class BookingStatusUpdate(BaseModel):
 class AvailabilityRequest(BaseModel):
     """GET /availability?date=YYYY-MM-DD&timezone=America/New_York — compute
     consultant working-hour slots for that date, converted to the requester's
-    timezone, excluding already-confirmed bookings."""
+    timezone, excluding slots already held by pending/confirmed bookings."""
 
     date: str = Field(..., description="ISO date YYYY-MM-DD in requester's local tz")
     timezone: str = Field(default="UTC", description="IANA tz of the requester")

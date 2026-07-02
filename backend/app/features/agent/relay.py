@@ -379,6 +379,15 @@ async def relay(client_ws: WebSocket) -> None:
             if fresh is not None:
                 agent = fresh
         settings_payload = am_service.assemble_settings(agent)
+        # The browser resolves caller-context placeholders ({{name}}, {{email}},
+        # {{phone}}) against the name/email/phone input fields and sends the
+        # resolved persona in the Init frame. When present, it overrides the
+        # raw DB template as the prompt — otherwise those substitutions (done
+        # client-side) would be silently discarded on the DB-agent path. The
+        # date tags are resolved server-side via render_persona regardless.
+        if persona:
+            from app.features.agent.render import render_persona
+            settings_payload["agent"]["think"]["prompt"] = render_persona(persona)
         print(
             f"Relay using DB agent id={agent.id} name={agent.name!r} "
             f"tools={[t.name for t in agent.tools]}"

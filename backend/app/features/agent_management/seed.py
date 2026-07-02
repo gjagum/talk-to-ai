@@ -34,6 +34,14 @@ async def _ensure_tool(session: AsyncSession, tool_dict: dict, handler_key: str)
         )
         session.add(tool)
         await session.flush()
+    else:
+        # Keep an existing Tool row in sync with the source-of-truth constants.
+        # Schemas evolve (e.g. renaming a parameter), and re-seeding should
+        # propagate those changes rather than leaving stale definitions behind.
+        tool.description = tool_dict["description"]
+        tool.parameters = tool_dict["parameters"]
+        tool.handler_key = handler_key
+        await session.flush()
     return tool
 
 
