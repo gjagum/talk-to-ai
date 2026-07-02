@@ -9,7 +9,9 @@ to use:
   - speak:    Deepgram aura-asteria-en, highest-quality English female voice.
 
 Two operating modes:
-  - `receptionist` (default): no tools except `gja_end_call`.
+  - `receptionist` (default): booking tools: `gja_contact_get`, `gja_contact_create`,
+                                `gja_check_availability`, `gja_create_event`, plus
+                                `gja_end_call`.
   - `drive_thru`:                drive-thru cashier persona + the full menu-ordering
                                 tool set (`gja_get_menu`, `gja_create_order`,
                                 `gja_add_item`, `gja_update_item`,
@@ -231,6 +233,155 @@ DRIVE_THRU_TOOLS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Booking / Receptionist tools
+# ---------------------------------------------------------------------------
+GJA_CONTACT_GET_TOOL = {
+    "name": "gja_contact_get",
+    "description": (
+        "Look up a contact by email and/or phone number. Returns the contact's id, "
+        "full_name, email, phone, timezone, and city if found, or an empty result if "
+        "no match. Always call this before `gja_contact_create` or `gja_create_event` "
+        "to avoid duplicates."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "email": {
+                "type": "string",
+                "description": "Contact email address to search for.",
+            },
+            "phone": {
+                "type": "string",
+                "description": "Contact phone number to search for.",
+            },
+        },
+        "required": [],
+    },
+}
+
+
+GJA_CONTACT_CREATE_TOOL = {
+    "name": "gja_contact_create",
+    "description": (
+        "Create or update a contact. Provide at least full_name and email. If a contact "
+        "with that email already exists, the fields are updated instead (idempotent upsert). "
+        "Returns the contact's id, full_name, email, phone, timezone, and city. "
+        "You MUST have a contact id to use `gja_create_event`."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "full_name": {
+                "type": "string",
+                "description": "Contact's full name (required).",
+            },
+            "email": {
+                "type": "string",
+                "description": "Contact's email address (required).",
+            },
+            "phone": {
+                "type": "string",
+                "description": "Contact's phone number (optional).",
+            },
+            "timezone": {
+                "type": "string",
+                "description": (
+                    "IANA timezone name (e.g. 'America/New_York', 'Australia/Sydney', "
+                    "'Asia/Manila'). Derive from the caller's city/state."
+                ),
+            },
+            "city": {
+                "type": "string",
+                "description": "City or state the contact is in.",
+            },
+        },
+        "required": ["full_name", "email"],
+    },
+}
+
+
+GJA_CHECK_AVAILABILITY_TOOL = {
+    "name": "gja_check_availability",
+    "description": (
+        "Check available 30-minute appointment slots for a given date. Returns a list of "
+        "free windows (start/end times in the requester's timezone). Consultant working "
+        "hours are Asia/Manila 09:00-17:00. Slots already blocked by confirmed bookings "
+        "are excluded. Always call this BEFORE `gja_create_event` to confirm the slot is "
+        "still open."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "date": {
+                "type": "string",
+                "description": "Date to check in YYYY-MM-DD format (in the requester's local timezone).",
+            },
+            "timezone": {
+                "type": "string",
+                "description": (
+                    "IANA timezone of the requester (e.g. 'America/New_York', "
+                    "'Australia/Sydney', 'Asia/Manila')."
+                ),
+            },
+        },
+        "required": ["date", "timezone"],
+    },
+}
+
+
+GJA_CREATE_EVENT_TOOL = {
+    "name": "gja_create_event",
+    "description": (
+        "Book an appointment (discovery/preso call). Requires a valid contact_id (obtained "
+        "from `gja_contact_get` or `gja_contact_create`) plus the confirmed date/time in "
+        "the prospect's timezone. The backend converts to UTC for storage. Fails if the "
+        "slot conflicts with an existing booking. Returns the booking details including "
+        "status ('pending'), date/time, and contact info. This is the ONLY way to complete "
+        "a booking — verbal agreement is not enough."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "contact_id": {
+                "type": "integer",
+                "description": "The contact's database id (from `gja_contact_get` or `gja_contact_create`).",
+            },
+            "requested_at": {
+                "type": "string",
+                "description": (
+                    "ISO-8601 datetime for the appointment in the contact's timezone "
+                    "(e.g. '2026-07-03T14:00:00+10:00' for Sydney)."
+                ),
+            },
+            "duration_minutes": {
+                "type": "integer",
+                "description": "Duration in minutes. Default 30. Must be 5-480.",
+            },
+            "title": {
+                "type": "string",
+                "description": "Optional meeting title (e.g. 'Discovery call with Jane').",
+            },
+            "notes": {
+                "type": "string",
+                "description": "Optional booking notes.",
+            },
+        },
+        "required": ["contact_id", "requested_at"],
+    },
+}
+
+
+# Booking tools for the receptionist mode.
+BOOKING_TOOLS = [
+    GJA_CONTACT_GET_TOOL,
+    GJA_CONTACT_CREATE_TOOL,
+    GJA_CHECK_AVAILABILITY_TOOL,
+    GJA_CREATE_EVENT_TOOL,
+    GJA_END_CALL_TOOL,
+]
+
+
 def build_settings(persona: str, *, drive_thru: bool = False) -> dict:
     """Build the Settings message sent after the Welcome handshake.
 
@@ -245,7 +396,7 @@ def build_settings(persona: str, *, drive_thru: bool = False) -> dict:
     else:
         greeting = DEFAULT_GREETING
         effective_persona = persona
-        functions = [GJA_END_CALL_TOOL]
+        functions = BOOKING_TOOLS
 
     return {
         "type": "Settings",

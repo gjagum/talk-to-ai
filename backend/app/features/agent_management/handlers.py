@@ -27,6 +27,12 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from app.core.database import AsyncSessionLocal
+from app.features.booking import service as booking_service
+from app.features.booking.schemas import (
+    AvailabilityRequest,
+    BookingCreate,
+    ContactCreate,
+)
 from app.features.menu import service as menu_service
 from app.features.menu.schemas import (
     OrderCreate,
@@ -215,3 +221,137 @@ async def _menu_finalize_order(ctx: ToolCallContext, arguments: dict) -> dict:
         except (ValueError, TypeError) as e:
             await session.rollback()
             return {"error": str(e)}
+
+
+# ── Booking / Receptionist ─────────────────────────────────────────────────
+
+
+def _serialize_contact(contact) -> dict:
+    """Serialize a Contact ORM row into the dict returned to the LLM."""
+    return {
+        "id": contact.id,
+        "full_name": contact.full_name,
+        "email": contact.email,
+        "phone": contact.phone,
+        "timezone": contact.timezone,
+        "city": contact.city,
+    }
+
+
+def _serialize_booking(booking) -> dict:
+    """Serialize a Booking ORM row into the dict returned to the LLM."""
+    return {
+        "id": booking.id,
+        "contact_id": booking.contact_id,
+        "title": booking.title,
+        "requested_at": booking.requested_at.isoformat() if booking.requested_at else None,
+        "duration_minutes": booking.duration_minutes,
+        "status": booking.status,
+        "notes": booking.notes,
+        "contact": {
+            "full_name": booking.contact.full_name if booking.contact else None,
+            "email": booking.contact.email if booking.contact else None,
+            "timezone": booking.contact.timezone if booking.contact else None,
+        },
+    }
+
+
+@register("booking.contact_get", "Find a contact by email/phone")
+async def _contact_get(ctx: ToolCallContext, arguments: dict) -> dict:
+    async with AsyncSessionLocal() as session:
+        try:
+            contact = await booking_service.find_contact(
+                session,
+                email=arguments.get("email"),
+                phone=arguments.get("phone"),
+            )
+            if contact is None:
+                return {"found": False, "contact": None}
+            return {"found": True, "contact": _serialize_contact(contact)}
+        except Exception as e:
+            await session.rollback()
+            print(f"booking.contact_get failed: {e}")
+            return {"error": f"Internal error: {e}"}
+
+
+@register("booking.contact_create", "Create or update a contact (upsert by email)")
+async def _contact_create(ctx: ToolCallContext, arguments: dict) -> dict:
+    async with AsyncSessionLocal() as session:
+        try:
+            contact = await booking_service.get_or_create_contact(
+                session,
+                email=arguments["email"],
+                full_name=arguments.get("full_name"),
+                phone=arguments.get("phone"),
+                timezone_name=arguments.get("timezone"),
+                city=arguments.get("city"),
+            )
+            await session.commit()
+            return _serialize_contact(contact)
+        except (ValueError, TypeError, KeyError) as e:
+            await session.rollback()
+            return {"error": str(e)}
+        except Exception as e:
+            await session.rollback()
+            print(f"booking.contact_create failed: {e}")
+            return {"error": f"Internal error: {e}"}
+
+
+@register("booking.check_availability", "Check available slots for a date")
+async def _check_availability(ctx: ToolCallContext, arguments: dict) -> dict:
+    async with AsyncSessionLocal() as session:
+        try:
+            request = AvailabilityRequest(
+                date=arguments["date"],
+                timezone=arguments.get("timezone", "UTC"),
+            )
+            slots = await booking_service.check_availability(session, request)
+            return {
+                "date": arguments["date"],
+                "timezone": arguments.get("timezone", "UTC"),
+                "consultant_timezone": booking_service.CONSULTANT_TIMEZONE,
+                "slots": [
+                    {
+                        "start": slot.start.isoformat(),
+                        "end": slot.end.isoformat(),
+                    }
+                    for slot in slots
+                ],
+            }
+        except (ValueError, TypeError, KeyError) as e:
+            await session.rollback()
+            return {"error": str(e)}
+        except Exception as e:
+            await session.rollback()
+            print(f"booking.check_availability failed: {e}")
+            return {"error": f"Internal error: {e}"}
+
+
+@register("booking.create_event", "Book an appointment (discovery/preso call)")
+async def _create_event(ctx: ToolCallContext, arguments: dict) -> dict:
+    async with AsyncSessionLocal() as session:
+        try:
+            payload = BookingCreate(
+                contact_id=int(arguments["contact_id"]),
+                requested_at=arguments["requested_at"],
+                duration_minutes=int(arguments.get("duration_minutes", 30)),
+                title=arguments.get("title"),
+                notes=arguments.get("notes"),
+            )
+            booking = await booking_service.create_booking(session, payload)
+            await session.commit()
+            # Refresh to populate the contact relationship for serialization.
+            from sqlalchemy.orm import selectinload
+            from sqlalchemy import select
+            from app.features.booking.models import Booking
+            stmt = select(Booking).where(Booking.id == booking.id).options(selectinload(Booking.contact))
+            result = await session.execute(stmt)
+            booking = result.scalar_one()
+            return {"success": True, "booking": _serialize_booking(booking)}
+        except (ValueError, TypeError, KeyError) as e:
+            await session.rollback()
+            return {"error": str(e)}
+        except Exception as e:
+            await session.rollback()
+            print(f"booking.create_event failed: {e}")
+            return {"error": f"Internal error: {e}"}

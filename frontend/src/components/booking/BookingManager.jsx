@@ -1,19 +1,23 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { CalendarDays, RefreshCw, Loader2 } from 'lucide-react';
-import BookingForm from './BookingForm';
+import BookingCalendar from './BookingCalendar';
+import BookingModal from './BookingModal';
 import BookingList from './BookingList';
 import { apiGet, apiPatch } from '../../lib/api';
 
 /**
  * BookingManager — container for the Bookings tab.
  *
- * Owns the bookings list state, fetches /api/booking/ on mount, and exposes
- * create + status-advance actions to BookingForm / BookingList.
+ * Shows a month calendar for picking available slots, with the booking form
+ * in a modal that opens when a time slot is selected. The scheduled bookings
+ * list is shown below the calendar.
  */
 export default function BookingManager() {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [selectedBooking, setSelectedBooking] = useState(null);
 
   const fetchBookings = useCallback(async () => {
     setLoading(true);
@@ -34,7 +38,6 @@ export default function BookingManager() {
 
   const handleCreated = useCallback(
     (created) => {
-      // Prepend and re-sort by requested_at desc to match the API order.
       setBookings((prev) =>
         [...prev, created].sort(
           (a, b) => new Date(b.requested_at) - new Date(a.requested_at)
@@ -59,6 +62,11 @@ export default function BookingManager() {
     }
   }, []);
 
+  const handleBook = useCallback((booking) => {
+    setSelectedBooking(booking);
+    setModalOpen(true);
+  }, []);
+
   return (
     <div className="w-full max-w-3xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
@@ -76,7 +84,16 @@ export default function BookingManager() {
         </button>
       </div>
 
-      <BookingForm onCreated={handleCreated} />
+      {/* Calendar with slot picker */}
+      <BookingCalendar onBook={handleBook} />
+
+      {/* Modal for creating the booking */}
+      <BookingModal
+        open={modalOpen}
+        onOpenChange={setModalOpen}
+        booking={selectedBooking}
+        onCreated={handleCreated}
+      />
 
       {error && (
         <div className="text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">

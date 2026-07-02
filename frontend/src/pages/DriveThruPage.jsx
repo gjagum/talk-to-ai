@@ -15,13 +15,13 @@ export default function DriveThruPage() {
   const [persona, setPersona] = useState(DEFAULT_DRIVE_THRU_PERSONA);
 
   return (
-    <div className="w-full max-w-3xl flex flex-col gap-6">
-      <div className="glass-panel rounded-3xl p-6">
+    <>
+      <div className="glass-panel rounded-3xl p-6 w-full flex flex-col items-center text-center">
         <h2 className="text-lg font-bold text-slate-100 mb-1 flex items-center gap-2">
           <UtensilsCrossed className="w-5 h-5 text-orange-400" />
           Drive-Thru Cashier (voice)
         </h2>
-        <p className="text-slate-400 text-sm mb-4">
+        <p className="text-slate-400 text-sm mb-4 max-w-md">
           Riley takes the order over the phone and builds a draft in the dashboard below.
         </p>
 
@@ -36,6 +36,6 @@ export default function DriveThruPage() {
         </div>
       </div>
       <MenuManager />
-    </div>
+    </>
   );
 }

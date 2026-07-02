@@ -39,7 +39,10 @@ async def _ensure_tool(session: AsyncSession, tool_dict: dict, handler_key: str)
 
 async def seed_if_empty(session: AsyncSession) -> None:
     """Create the canonical Tools + Agents if missing. Idempotent by name."""
+    # ── System ──────────────────────────────────────────────────────────
     end_call = await _ensure_tool(session, legacy.GJA_END_CALL_TOOL, "system.end_call")
+
+    # ── Menu / Drive-thru ───────────────────────────────────────────────
     get_menu = await _ensure_tool(session, legacy.GJA_GET_MENU_TOOL, "menu.list")
     create_order = await _ensure_tool(session, legacy.GJA_CREATE_ORDER_TOOL, "menu.create_order")
     add_item = await _ensure_tool(session, legacy.GJA_ADD_ITEM_TOOL, "menu.add_item")
@@ -48,7 +51,19 @@ async def seed_if_empty(session: AsyncSession) -> None:
         session, legacy.GJA_FINALIZE_ORDER_TOOL, "menu.finalize_order"
     )
 
-    # ── receptionist (no menu tools) ────────────────────────────────────
+    # ── Booking / Receptionist ──────────────────────────────────────────
+    contact_get = await _ensure_tool(session, legacy.GJA_CONTACT_GET_TOOL, "booking.contact_get")
+    contact_create = await _ensure_tool(
+        session, legacy.GJA_CONTACT_CREATE_TOOL, "booking.contact_create"
+    )
+    check_availability = await _ensure_tool(
+        session, legacy.GJA_CHECK_AVAILABILITY_TOOL, "booking.check_availability"
+    )
+    create_event = await _ensure_tool(
+        session, legacy.GJA_CREATE_EVENT_TOOL, "booking.create_event"
+    )
+
+    # ── receptionist (with booking tools) ───────────────────────────────
     rex = await get_agent_by_name(session, "receptionist")
     if rex is None:
         rex = Agent(
@@ -59,7 +74,31 @@ async def seed_if_empty(session: AsyncSession) -> None:
         )
         session.add(rex)
         await session.flush()
-        await assign_tools(session, rex, [end_call.id])
+        await assign_tools(
+            session,
+            rex,
+            [
+                contact_get.id,
+                contact_create.id,
+                check_availability.id,
+                create_event.id,
+                end_call.id,
+            ],
+        )
+    else:
+        # Existing receptionist — ensure all booking tools are assigned
+        # (idempotent: assign_tools sets membership, doesn't duplicate).
+        await assign_tools(
+            session,
+            rex,
+            [
+                contact_get.id,
+                contact_create.id,
+                check_availability.id,
+                create_event.id,
+                end_call.id,
+            ],
+        )
 
     # ── drive_thru (Burger Barn) ────────────────────────────────────────
     drive = await get_agent_by_name(session, "drive_thru")
